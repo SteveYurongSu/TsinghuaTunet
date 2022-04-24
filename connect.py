@@ -30,14 +30,14 @@ int2byte = struct.Struct(">B").pack
 def xEncode(str, key):
         def s(a, b):
             c = len(a)
-            v = []
-            for i in range(0, c, 4):
-                v.append(
-                    ord(a[i]) |
-                    lshift(0 if i + 1 >= len(a) else ord(a[i + 1]), 8) |
-                    lshift(0 if i + 2 >= len(a) else ord(a[i + 2]), 16) |
-                    lshift(0 if i + 3 >= len(a) else ord(a[i + 3]), 24)
-                )
+            v = [
+                ord(a[i])
+                | lshift(0 if i + 1 >= len(a) else ord(a[i + 1]), 8)
+                | lshift(0 if i + 2 >= len(a) else ord(a[i + 2]), 16)
+                | lshift(0 if i + 3 >= len(a) else ord(a[i + 3]), 24)
+                for i in range(0, c, 4)
+            ]
+
             if b:
                 v.append(c)
             return v
@@ -55,10 +55,7 @@ def xEncode(str, key):
                     + int2byte(rshift(a[i], 8) & 0xff) \
                     + int2byte(rshift(a[i], 16) & 0xff) \
                     + int2byte(rshift(a[i], 24) & 0xff)
-            if b:
-                return b''.join(a)[:c]
-            else:
-                return b''.join(a)
+            return b''.join(a)[:c] if b else b''.join(a)
 
         def rshift(x, n):
             return x >> n
@@ -112,7 +109,7 @@ def auth_login(username,password,ac_id=None,ipv=4):
         ac_id   : a messy parameter in srun's protocol
         ipv     : ip version, 4 or 6
     """
-    if password==None:
+    if password is None:
         log("please update (re-generate) config to get support for auth")
         return -4
 
@@ -135,7 +132,7 @@ def auth_login(username,password,ac_id=None,ipv=4):
         return -1
 
     #get ac_id
-    if ac_id==None:
+    if ac_id is None:
         try:
             url="http://usereg.tsinghua.edu.cn/ip_login_import.php"
             params={'actionType': 'searchNasId', 'ip': ip}
@@ -148,9 +145,9 @@ def auth_login(username,password,ac_id=None,ipv=4):
                 #近春园西楼39, 四教43, 27号楼宿舍162, 李兆基科技楼24
             elif c2.isnumeric():
                 ac_id=int(c2)
-                log("get ac_id: %s"%(ac_id))
+                log(f"get ac_id: {ac_id}")
             else:
-                log("get ac_id abnormal: %s"%(c2),l=2)
+                log(f"get ac_id abnormal: {c2}", l=2)
                 ac_id=1
             del url,params,g2
         except:
@@ -160,7 +157,8 @@ def auth_login(username,password,ac_id=None,ipv=4):
         log("using passed-in ac_id=%d"%(ac_id))
 
     # login!
-    n=200;typ=1
+    n=200
+    typ=1
     try:
         url="https://auth%d.tsinghua.edu.cn/cgi-bin/srun_portal"%(ipv)
         info='{SRBX1}'+weird_base64_encode(xEncode(json.dumps({'username':username,'password':password,'ip':ip,'acid':ac_id,'enc_ver':'srun_bx1',}),token)).decode()
@@ -193,25 +191,27 @@ def net_login(username,password_hash,password):
     headers={"Accept":"*/*","Host":"net.tsinghua.edu.cn",
              "User-Agent":"Mozilla/5.0","Accept-Encoding":"gzip, deflate","Accept-Language":"zh;q=0.9,en;q=0.8"}
     data={'action':'login','username':username,'password':password_hash,'ac_id':'1'}
-    log("posting: %s"%(url))
+    log(f"posting: {url}")
     try:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         post=requests.post(url,headers=headers,data=data,timeout=TIMEOUT,verify=False,allow_redirects=True)
         content=post.content.decode("gbk") # post.encoding is "ISO-8859-1" but it is wrong
     except Exception as e:
-        log("error happened: %s"%(e),l=2)
+        log(f"error happened: {e}", l=2)
         return -1
 
     s_auth=re.search("http://(auth[4,6]{0,1}\\.tsinghua\\.edu\\.cn)/index_([0-9]+)\\.html",content)
     if s_auth!=None: #see comments for test_network
-        log("Tsinghua wants you to login via auth (%s), trying..."%(s_auth.group(0)))
-        ac_id=int(s_auth.group(2))
+        log(f"Tsinghua wants you to login via auth ({s_auth[0]}), trying...")
+        ac_id = int(s_auth[2])
         auth_login(username,password,ac_id=ac_id)
+    elif content in [
+        "IP has been online, please logout.",
+        "Login is successful.",
+    ]:
+        log('net return %d: "%s"'%(post.status_code,content))
     else:
-        if content=="IP has been online, please logout." or content=="Login is successful.":
-            log('net return %d: "%s"'%(post.status_code,content))
-        else:
-            log('net return %d: "%s"'%(post.status_code,content),l=2)
+        log('net return %d: "%s"'%(post.status_code,content),l=2)
 
 def test_network(test_url):
     """
@@ -222,16 +222,17 @@ def test_network(test_url):
     """
     try:
         headers={"Accept":"*/*"}
-        log("getting: %s"%(test_url))
+        log(f"getting: {test_url}")
         get=requests.get(test_url,headers=headers,timeout=10)
-        if get.status_code==200:
-            content=get.content.decode(get.encoding)
-            if "auth" in content and "tsinghua.edu.cn" in content:
-                return "Tsinghua wants you to login via auth"
-            else:
-                return 0
-        else:
+        if get.status_code != 200:
             return "get.status_code=%d"%(get.status_code,)
+        content=get.content.decode(get.encoding)
+        return (
+            "Tsinghua wants you to login via auth"
+            if "auth" in content and "tsinghua.edu.cn" in content
+            else 0
+        )
+
     except Exception as e:
         return str(e)
 
@@ -244,7 +245,7 @@ def test_and_reconnent(username,password_hash,password):
     if test_re==0:
         log("online already")
     else:
-        log("not online, reconnecting... reason: %s"%(test_re))
+        log(f"not online, reconnecting... reason: {test_re}")
         net_login(username,password_hash,password)
 
 def gen_config():
